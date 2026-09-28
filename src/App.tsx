@@ -26,7 +26,7 @@ function App() {
       <EditorPage
         capturedImage={capturedImage}
         onBack={() => setScreen('scanner')}
-        onSave={() => setScreen('dashboard')}
+        onSaved={() => setScreen('dashboard')}
       />
     );
   }

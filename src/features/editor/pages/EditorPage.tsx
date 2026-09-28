@@ -1,20 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Loader2, RotateCcw, RotateCw, Save } from 'lucide-react';
 import { applyFilter, FILTER_OPTIONS, type FilterId } from '../lib/imageEffects';
+import SaveDocumentModal from '../../export/components/SaveDocumentModal';
 
 interface EditorPageProps {
   /** Imagen capturada por la cámara (data URL PNG). */
   capturedImage: string;
   /** Vuelve a la pantalla de cámara. */
   onBack?: () => void;
-  /** Entrega la imagen editada final (data URL PNG). */
-  onSave?: (dataUrl: string) => void;
+  /** Se invoca al guardar con éxito el documento (después del modal). */
+  onSaved?: () => void;
 }
 
 export default function EditorPage({
   capturedImage,
   onBack,
-  onSave,
+  onSaved,
 }: EditorPageProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
@@ -23,6 +24,10 @@ export default function EditorPage({
   const [loaded, setLoaded] = useState(0);
   const [rotation, setRotation] = useState(0); // grados: 0 | 90 | 180 | 270
   const [filter, setFilter] = useState<FilterId>('original');
+
+  // Modal de guardado/exportación
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalImageDataUrl, setModalImageDataUrl] = useState<string | null>(null);
 
   // Carga la imagen capturada (data URL) en un HTMLImageElement
   useEffect(() => {
@@ -82,11 +87,18 @@ export default function EditorPage({
     setRotation((current) => (current + 90) % 360);
   }, []);
 
-  const handleSave = useCallback(() => {
+  const handleOpenSaveModal = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    onSave?.(canvas.toDataURL('image/png'));
-  }, [onSave]);
+    // Consolida rotación + filtro en una imagen PNG para exportar
+    setModalImageDataUrl(canvas.toDataURL('image/png'));
+    setModalOpen(true);
+  }, []);
+
+  const handleCloseSaveModal = useCallback(() => {
+    setModalOpen(false);
+    setModalImageDataUrl(null);
+  }, []);
 
   return (
     <div className="flex min-h-dvh flex-col bg-slate-900 text-white">
@@ -108,7 +120,7 @@ export default function EditorPage({
 
         <button
           type="button"
-          onClick={handleSave}
+          onClick={handleOpenSaveModal}
           aria-label="Guardar documento"
           className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-brand-teal px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-brand-teal-dark focus-visible:ring-2 focus-visible:ring-brand-neon focus-visible:outline-none"
         >
@@ -176,6 +188,15 @@ export default function EditorPage({
           })}
         </div>
       </footer>
+
+      {/* Modal Guardar/Exportar */}
+      {modalOpen && modalImageDataUrl && (
+        <SaveDocumentModal
+          imageDataUrl={modalImageDataUrl}
+          onClose={handleCloseSaveModal}
+          onSaved={onSaved}
+        />
+      )}
     </div>
   );
 }

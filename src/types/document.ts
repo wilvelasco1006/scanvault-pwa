@@ -12,6 +12,8 @@ export interface ScannedDocument {
   createdAt: string;
   /** Size of the stored file in bytes. */
   fileSize: number;
-  /** Local object/blob URL of the document preview image. */
+  /** Data URL de la miniatura que se muestra en la lista del Dashboard. */
   thumbnailUrl: string;
+  /** Blob del PDF generado (application/pdf), persistido en IndexedDB. */
+  pdfBlob: Blob;
 }

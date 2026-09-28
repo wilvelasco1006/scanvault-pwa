@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Header from '../components/Header';
 import EmptyState from '../components/EmptyState';
 import DocumentCard from '../components/DocumentCard';
 import FAB from '../components/FAB';
+import { getAllDocuments } from '../../../services/db';
 import type { ScannedDocument } from '../../../types/document';
-// Interface que define las propiedades que el componente DashboardPage espera recibir. Incluye dos funciones opcionales: `onNewScan`, que se invoca cuando el usuario hace clic en el botón de acción flotante (FAB) o en el CTA de estado vacío para iniciar un nuevo escaneo, y `onSettingsClick`, que se invoca cuando el usuario hace clic en el ícono de configuración en el encabezado.
+
 interface DashboardPageProps {
   /** Invoked when the user taps the FAB / empty-state CTA to start a scan. */
   onNewScan?: () => void;
@@ -16,8 +17,27 @@ export default function DashboardPage({
   onNewScan,
   onSettingsClick,
 }: DashboardPageProps) {
-  // Placeholder: will be hydrated from IndexedDB once the storage layer lands.
-  const [documents] = useState<ScannedDocument[]>([]);
+  const [documents, setDocuments] = useState<ScannedDocument[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Carga los documentos guardados en IndexedDB al iniciar el componente
+  useEffect(() => {
+    let disposed = false;
+    void getAllDocuments()
+      .then((stored) => {
+        if (!disposed) setDocuments(stored);
+      })
+      .catch(() => {
+        if (!disposed) setDocuments([]);
+      })
+      .finally(() => {
+        if (!disposed) setLoading(false);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
   const hasDocuments = documents.length > 0;
 
   return (
@@ -25,7 +45,11 @@ export default function DashboardPage({
       <Header onSettingsClick={onSettingsClick} />
 
       <main className="mx-auto w-full max-w-md px-4 pb-32">
-        {hasDocuments ? (
+        {loading ? (
+          <p className="mt-16 text-center text-sm text-slate-400">
+            Cargando documentos…
+          </p>
+        ) : hasDocuments ? (
           <section aria-label="Documentos escaneados">
             <h2 className="mt-6 mb-3 text-sm font-semibold tracking-wide text-slate-500 uppercase">
               Mis documentos
