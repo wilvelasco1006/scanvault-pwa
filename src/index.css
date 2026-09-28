@@ -7,3 +7,30 @@
   --color-brand-neon: #10B981;
   --color-brand-darkbg: #0F172A;
 }
+
+/* Línea de escaneo animada del overlay de la cámara */
+.scanline {
+  position: absolute;
+  top: 0;
+  left: 10px;
+  right: 10px;
+  height: 2px;
+  border-radius: 9999px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(16, 185, 129, 0.9),
+    transparent
+  );
+  filter: drop-shadow(0 0 6px rgba(16, 185, 129, 0.8));
+  animation: scanline-move 2.4s ease-in-out infinite alternate;
+}
+
+@keyframes scanline-move {
+  from {
+    top: 8px;
+  }
+  to {
+    top: calc(100% - 10px);
+  }
+}
