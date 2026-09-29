@@ -3,12 +3,13 @@
  * Se aplican directamente sobre el contexto 2D del lienzo del editor.
  */
 
-export type FilterId = 'original' | 'grayscale' | 'bw';
+export type FilterId = 'original' | 'grayscale' | 'bw' | 'scannerPro';
 
 export const FILTER_OPTIONS: ReadonlyArray<{ id: FilterId; label: string }> = [
   { id: 'original', label: 'Original' },
   { id: 'grayscale', label: 'Escala de Grises' },
   { id: 'bw', label: 'B&N Alto Contraste' },
+  { id: 'scannerPro', label: 'Escáner Pro' },
 ];
 
 /**
@@ -16,12 +17,14 @@ export const FILTER_OPTIONS: ReadonlyArray<{ id: FilterId; label: string }> = [
  * - 'original': no modifica nada.
  * - 'grayscale': luminancia (rec. 601) en cada canal.
  * - 'bw': umbral a 255/0 para alto contraste legible en texto.
+ * - 'scannerPro': se procesa aparte con OpenCV (applyAdaptiveThreshold),
+ *   aquí se ignora para no pisar el resultado previo del pipeline.
  */
 export function applyFilter(
   ctx: CanvasRenderingContext2D,
   filter: FilterId,
 ): void {
-  if (filter === 'original') return;
+  if (filter === 'original' || filter === 'scannerPro') return;
 
   const { width, height } = ctx.canvas;
   const imageData = ctx.getImageData(0, 0, width, height);
