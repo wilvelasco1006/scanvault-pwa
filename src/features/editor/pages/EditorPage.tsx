@@ -19,11 +19,14 @@ import {
 } from '../lib/documentProcessing';
 import { initOpenCV } from '../../scanner/lib/opencv';
 import type { Corners, Point } from '../../../types/geometry';
+import type { DocumentType } from '../../../types/scan';
 import SaveDocumentModal from '../../export/components/SaveDocumentModal';
 
 interface EditorPageProps {
   /** Imagen capturada por la cámara (data URL PNG). */
   capturedImage: string;
+  /** Tipo de documento escaneado: el encuadre/recorte automático es solo para carnet. */
+  documentType?: DocumentType;
   /** Vuelve a la pantalla de cámara. */
   onBack?: () => void;
   /** Se invoca al guardar con éxito el documento (después del modal). */
@@ -105,6 +108,7 @@ function paintCornerOverlay({
 
 export default function EditorPage({
   capturedImage,
+  documentType = 'document',
   onBack,
   onSaved,
 }: EditorPageProps) {
@@ -114,6 +118,9 @@ export default function EditorPage({
   const dragIndexRef = useRef<number | null>(null);
   const cornersRef = useRef<Corners | null>(null);
   const renderTokenRef = useRef(0);
+
+  // El encuadre/recorte automático por esquinas es exclusivo de documentos tipo carnet
+  const isCarnet = documentType === 'carnet';
 
   // Contador que incrementa cuando se carga la imagen → dispara el redibujado
   const [loaded, setLoaded] = useState(0);
@@ -139,7 +146,9 @@ export default function EditorPage({
   }, [corners]);
 
   // Auto-detección del contorno (se dispara al cargar la imagen y desde el botón)
+  // Solo aplica a carnets: para documentos normales no se recorta el encuadre.
   const runDetection = useCallback(async (interactive: boolean) => {
+    if (!isCarnet) return;
     const image = imageRef.current;
     if (!image) return;
     if (interactive) setDetecting(true);
@@ -157,7 +166,7 @@ export default function EditorPage({
     } finally {
       if (interactive) setDetecting(false);
     }
-  }, []);
+  }, [isCarnet]);
 
   // Carga la imagen capturada (data URL) en un HTMLImageElement
   useEffect(() => {
@@ -202,14 +211,32 @@ export default function EditorPage({
     baseCtx.drawImage(image, -baseW / 2, -baseH / 2);
 
     // 2) Recorte por perspectiva + filtro 'Escáner Pro' (OpenCV)
+    //    El recorte automático es exclusivo de carnets; para documentos solo
+    //    se aplican rotación y filtros convencionales.
     const { current: currentCorners } = cornersRef;
-    const doWarp = perspectiveApplied && currentCorners !== null;
-    const doScan = filter === 'scannerPro';
+    let doWarp = isCarnet && perspectiveApplied && currentCorners !== null;
+    let doScan = filter === 'scannerPro';
 
     if (doWarp || doScan) {
-      await initOpenCV(); // límite asíncrono: garantiza el WASM listo antes del spinner
-      setBusy(true);
-      setOpencvError(null);
+      let opencvReady = false;
+      try {
+        await initOpenCV(); // límite asíncrono: garantiza el WASM listo antes del spinner
+        opencvReady = true;
+      } catch (error) {
+        console.error('OpenCV no disponible', error);
+      }
+      if (opencvReady) {
+        setBusy(true);
+        setOpencvError(null);
+      } else {
+        // Fallback: sin OpenCV se omite el recorte/binarización y se muestra
+        // la imagen base; el mensaje informa al usuario del motivo.
+        doWarp = false;
+        doScan = false;
+        setOpencvError(
+          'OpenCV no estuvo disponible en este dispositivo: el recorte y el filtro Escáner Pro no se aplicaron. Verifica la conexión y reintenta.',
+        );
+      }
     }
 
     try {
@@ -255,7 +282,7 @@ export default function EditorPage({
     } finally {
       if (token === renderTokenRef.current) setBusy(false);
     }
-  }, [loaded, rotation, filter, perspectiveApplied]);
+  }, [loaded, rotation, filter, perspectiveApplied, isCarnet]);
 
   useEffect(() => {
     if (loaded === 0) return;
@@ -285,9 +312,9 @@ export default function EditorPage({
   }, []);
 
   const handleApplyCrop = useCallback(() => {
-    if (!cornersRef.current) return;
+    if (!isCarnet || !cornersRef.current) return;
     setPerspectiveApplied(true);
-  }, []);
+  }, [isCarnet]);
 
   const handleResetCrop = useCallback(() => {
     setPerspectiveApplied(false);
@@ -379,7 +406,7 @@ export default function EditorPage({
     setOpencvError(null);
   }, []);
 
-  const draggable = corners !== null && !perspectiveApplied;
+  const draggable = isCarnet && corners !== null && !perspectiveApplied;
 
   return (
     <div className="flex min-h-dvh flex-col bg-slate-900 text-white">
@@ -473,50 +500,52 @@ export default function EditorPage({
           </button>
         </div>
 
-        {/* Encuadre / recorte por perspectiva */}
-        <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
-          {!perspectiveApplied ? (
-            <>
+        {/* Encuadre / recorte por perspectiva (solo para carnet) */}
+        {isCarnet && (
+          <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+            {!perspectiveApplied ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => void runDetection(true)}
+                  disabled={detecting || busy}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3.5 py-1.5 text-xs font-semibold text-white/80 transition-colors hover:bg-white/20 focus-visible:ring-2 focus-visible:ring-brand-neon focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {detecting ? (
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <ScanLine className="h-4 w-4" aria-hidden="true" />
+                  )}
+                  Auto encuadre
+                </button>
+                <button
+                  type="button"
+                  onClick={handleApplyCrop}
+                  disabled={!corners || busy}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-brand-teal px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-brand-teal-dark focus-visible:ring-2 focus-visible:ring-brand-neon focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Crop className="h-4 w-4" aria-hidden="true" />
+                  Aplicar recorte
+                </button>
+                {corners && (
+                  <p className="w-full text-center text-[11px] text-white/50">
+                    Arrastra las esquinas para ajustar el marco del documento
+                  </p>
+                )}
+              </>
+            ) : (
               <button
                 type="button"
-                onClick={() => void runDetection(true)}
-                disabled={detecting || busy}
+                onClick={handleResetCrop}
+                disabled={busy}
                 className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3.5 py-1.5 text-xs font-semibold text-white/80 transition-colors hover:bg-white/20 focus-visible:ring-2 focus-visible:ring-brand-neon focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {detecting ? (
-                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                ) : (
-                  <ScanLine className="h-4 w-4" aria-hidden="true" />
-                )}
-                Auto encuadre
+                <Undo2 className="h-4 w-4" aria-hidden="true" />
+                Restablecer recorte
               </button>
-              <button
-                type="button"
-                onClick={handleApplyCrop}
-                disabled={!corners || busy}
-                className="inline-flex items-center gap-1.5 rounded-full bg-brand-teal px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-brand-teal-dark focus-visible:ring-2 focus-visible:ring-brand-neon focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <Crop className="h-4 w-4" aria-hidden="true" />
-                Aplicar recorte
-              </button>
-              {corners && (
-                <p className="w-full text-center text-[11px] text-white/50">
-                  Arrastra las esquinas para ajustar el marco del documento
-                </p>
-              )}
-            </>
-          ) : (
-            <button
-              type="button"
-              onClick={handleResetCrop}
-              disabled={busy}
-              className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3.5 py-1.5 text-xs font-semibold text-white/80 transition-colors hover:bg-white/20 focus-visible:ring-2 focus-visible:ring-brand-neon focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <Undo2 className="h-4 w-4" aria-hidden="true" />
-              Restablecer recorte
-            </button>
-          )}
-        </div>
+            )}
+          </div>
+        )}
 
         {opencvError && (
           <p className="mt-2 text-center text-xs text-red-400">{opencvError}</p>

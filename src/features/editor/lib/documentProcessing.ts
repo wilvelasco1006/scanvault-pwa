@@ -81,19 +81,47 @@ export function inverseRotatePoint(
 }
 
 /**
+ * Lado máximo (px) para la imagen de trabajo de la detección de contorno:
+ * fotos grandes se reducen primero para que el móvil no se congele.
+ */
+const MAX_DETECT_SIDE = 1280;
+
+function downscaleCanvas(source: HTMLCanvasElement, scale: number): HTMLCanvasElement {
+  const w = Math.max(1, Math.round(source.width * scale));
+  const h = Math.max(1, Math.round(source.height * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(source, 0, 0, w, h);
+  }
+  return canvas;
+}
+
+/**
  * Detecta el contorno principal del documento (la hoja) en la imagen del
  * canvas y devuelve sus 4 esquinas ordenadas [tl, tr, br, bl].
  *
  * Pipeline: escala de grises → desenfoque gaussiano → Canny → contornos
  * (RETR_LIST) → se busca el polígono convexo de mayor área con 4 vértices.
  *
+ * Las fotos grandes se procesan reducidas (dirección más rápida) y las
+ * esquinas se devuelven escaladas de vuelta a las coordenadas originales.
  * Devuelve `null` si no se encuentra un contorno cuadrilátero válido.
  */
 export async function detectDocumentContour(
   srcCanvas: HTMLCanvasElement,
 ): Promise<Corners | null> {
   const cv = await initOpenCV();
-  const src = cv.imread(srcCanvas);
+
+  const longSide = Math.max(srcCanvas.width, srcCanvas.height);
+  const scale = Math.min(1, MAX_DETECT_SIDE / longSide);
+  const workCanvas = scale < 1 ? downscaleCanvas(srcCanvas, scale) : srcCanvas;
+
+  const src = cv.imread(workCanvas);
   const gray = new cv.Mat();
   const blurred = new cv.Mat();
   const edges = new cv.Mat();
@@ -108,7 +136,7 @@ export async function detectDocumentContour(
     cv.findContours(edges, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
 
     // El cuadrilátero debe ocupar al menos el 5% de la imagen para filtrar ruido.
-    const minArea = srcCanvas.width * srcCanvas.height * 0.05;
+    const minArea = workCanvas.width * workCanvas.height * 0.05;
     let bestPoints: Point[] | null = null;
     let bestArea = minArea;
 
@@ -130,7 +158,14 @@ export async function detectDocumentContour(
       }
     }
 
-    return bestPoints ? orderCorners(bestPoints) : null;
+    const corners = bestPoints ? orderCorners(bestPoints) : null;
+    if (!corners || scale === 1) return corners;
+
+    // Devuelve las esquinas en el sistema de coordenadas de la foto original
+    return corners.map((p) => ({
+      x: p.x / scale,
+      y: p.y / scale,
+    })) as Corners;
   } finally {
     src.delete();
     gray.delete();

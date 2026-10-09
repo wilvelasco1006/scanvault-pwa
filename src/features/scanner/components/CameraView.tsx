@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Camera, CameraOff, Loader2, RotateCcw } from 'lucide-react';
+import type { DocumentType } from '../../../types/scan';
 
 type CameraStatus = 'loading' | 'active' | 'error';
 
 interface CameraViewProps {
-  /** Receives the captured frame as a PNG data URL. */
-  onCapture?: (dataUrl: string) => void;
+  /** Receives the captured frame as a PNG data URL + the selected document type. */
+  onCapture?: (dataUrl: string, documentType: DocumentType) => void;
 }
 
 function describeCameraError(error: unknown): string {
@@ -82,6 +83,8 @@ export default function CameraView({ onCapture }: CameraViewProps) {
   const [status, setStatus] = useState<CameraStatus>('loading');
   const [errorMessage, setErrorMessage] = useState('');
   const [flash, setFlash] = useState(false);
+  // El marco de encuadre solo aplica a documentos tipo carnet
+  const [documentType, setDocumentType] = useState<DocumentType>('document');
 
   /** Detiene todos los tracks para apagar el indicador de cámara del sistema. */
   const stopStream = useCallback(() => {
@@ -174,8 +177,8 @@ export default function CameraView({ onCapture }: CameraViewProps) {
     }
     flashTimeoutRef.current = window.setTimeout(() => setFlash(false), 250);
 
-    onCapture?.(dataUrl);
-  }, [onCapture, status]);
+    onCapture?.(dataUrl, documentType);
+  }, [documentType, onCapture, status]);
 
   return (
     <div className="relative min-h-dvh bg-slate-900 text-white">
@@ -191,8 +194,8 @@ export default function CameraView({ onCapture }: CameraViewProps) {
       {/* Canvas oculto: se usa para extraer el frame capturado */}
       <canvas ref={canvasRef} className="hidden" />
 
-      {/* Marco estilo escáner */}
-      {status === 'active' && <ScanFrame />}
+      {/* Marco estilo escáner: solo para documentos tipo carnet */}
+      {status === 'active' && documentType === 'carnet' && <ScanFrame />}
 
       {/* Flash de captura */}
       <div
@@ -237,8 +240,38 @@ export default function CameraView({ onCapture }: CameraViewProps) {
       {/* Controles del obturador */}
       {status === 'active' && (
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex flex-col items-center gap-4 pb-[max(2rem,env(safe-area-inset-bottom))]">
+          {/* Tipo de documento: el marco solo se usa para carnet */}
+          <div className="pointer-events-auto flex items-center gap-1 rounded-full bg-slate-900/60 p-1 backdrop-blur">
+            <button
+              type="button"
+              aria-pressed={documentType === 'document'}
+              onClick={() => setDocumentType('document')}
+              className={`rounded-full px-4 py-1.5 text-xs font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-brand-neon focus-visible:outline-none ${
+                documentType === 'document'
+                  ? 'bg-white text-slate-900'
+                  : 'text-white/70 hover:text-white'
+              }`}
+            >
+              Documento
+            </button>
+            <button
+              type="button"
+              aria-pressed={documentType === 'carnet'}
+              onClick={() => setDocumentType('carnet')}
+              className={`rounded-full px-4 py-1.5 text-xs font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-brand-neon focus-visible:outline-none ${
+                documentType === 'carnet'
+                  ? 'bg-white text-slate-900'
+                  : 'text-white/70 hover:text-white'
+              }`}
+            >
+              Carnet
+            </button>
+          </div>
+
           <p className="text-[11px] font-semibold tracking-wide text-white/70 uppercase">
-            Coloca el documento dentro del marco
+            {documentType === 'carnet'
+              ? 'Coloca el carnet dentro del marco'
+              : 'Coloca el documento en el encuadre'}
           </p>
           <button
             type="button"

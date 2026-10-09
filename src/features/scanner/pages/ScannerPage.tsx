@@ -1,11 +1,12 @@
 import { ArrowLeft } from 'lucide-react';
 import CameraView from '../components/CameraView';
+import type { DocumentType } from '../../../types/scan';
 
 interface ScannerPageProps {
   /** Returns to the dashboard. */
   onBack?: () => void;
-  /** Receives the captured PNG data URL from CameraView. */
-  onCapture?: (dataUrl: string) => void;
+  /** Receives the captured PNG data URL + selected document type from CameraView. */
+  onCapture?: (dataUrl: string, documentType: DocumentType) => void;
 }
 
 export default function ScannerPage({ onBack, onCapture }: ScannerPageProps) {
