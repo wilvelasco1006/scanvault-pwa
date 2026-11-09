@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CheckCircle2, Download, FolderPlus, Loader2, X } from 'lucide-react';
 import { saveDocument } from '../../../services/db';
-import { generatePdf, type GeneratedPdf } from '../lib/pdfGenerator';
+import { generatePdf, type GeneratedPdf, type PdfPageImage } from '../lib/pdfGenerator';
 import { createThumbnail } from '../../../lib/image/thumbnail';
 import type { ScannedDocument } from '../../../types/document';
 
 interface SaveDocumentModalProps {
-  /** Imágenes finales de cada página, en el orden del PDF (data URL). */
-  pageImages: string[];
+  /** Páginas finales, en el orden del PDF. */
+  pages: PdfPageImage[];
   onClose?: () => void;
   /** Se invoca al guardar con éxito el documento en IndexedDB. */
   onSaved?: (document: ScannedDocument) => void;
@@ -37,7 +37,7 @@ function slugify(value: string): string {
 }
 
 export default function SaveDocumentModal({
-  pageImages,
+  pages,
   onClose,
   onSaved,
 }: SaveDocumentModalProps) {
@@ -46,7 +46,7 @@ export default function SaveDocumentModal({
   const [error, setError] = useState<string | null>(null);
   const [downloaded, setDownloaded] = useState(false);
 
-  const pageCount = pageImages.length;
+  const pageCount = pages.length;
 
   // Cachea PDF + miniatura para no regenerarlos si descargas y luego guardas
   const preparedRef = useRef<{
@@ -57,14 +57,14 @@ export default function SaveDocumentModal({
   const prepare = useCallback(async () => {
     if (!preparedRef.current) {
       const [pdf, thumbnailUrl] = await Promise.all([
-        generatePdf(pageImages, 'a4'),
+        generatePdf(pages, 'a4'),
         // La miniatura del dashboard se toma de la primera página
-        createThumbnail(pageImages[0]),
+        createThumbnail(pages[0].dataUrl),
       ]);
       preparedRef.current = { pdf, thumbnailUrl };
     }
     return preparedRef.current;
-  }, [pageImages]);
+  }, [pages]);
 
   // Cerrar con Escape (salvo durante una operación en curso)
   useEffect(() => {

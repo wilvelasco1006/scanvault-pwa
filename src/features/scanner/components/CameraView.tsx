@@ -56,32 +56,22 @@ async function getCameraStream(): Promise<MediaStream> {
   });
 }
 
-/** Marco estilo escáner: esquinas resaltadas + línea de escaneo animada. */
-function ScanFrame() {
+/**
+ * Guía de encuadre sobria: un recorte limpio del visor que oscurece todo lo
+ * que queda fuera del área útil. El aspecto cambia según el tipo de documento
+ * para que el marco coincida con lo que se va a escanear.
+ */
+function ScanFrame({ variant }: { variant: 'card' | 'sheet' }) {
   return (
-    <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
-      <div className="relative aspect-[1.586] w-[70%] max-w-[320px]">
-        {/* Línea de escaneo animada */}
-        <div className="scanline" aria-hidden="true" />
-
-        {/* Esquinas delimitadoras */}
-        <span
-          className="absolute top-0 left-0 h-12 w-12 rounded-tl-2xl border-t-4 border-l-4 border-brand-neon shadow-[0_0_12px_rgba(16,185,129,0.6)]"
-          aria-hidden="true"
-        />
-        <span
-          className="absolute top-0 right-0 h-12 w-12 rounded-tr-2xl border-t-4 border-r-4 border-brand-neon shadow-[0_0_12px_rgba(16,185,129,0.6)]"
-          aria-hidden="true"
-        />
-        <span
-          className="absolute bottom-0 left-0 h-12 w-12 rounded-bl-2xl border-b-4 border-l-4 border-brand-neon shadow-[0_0_12px_rgba(16,185,129,0.6)]"
-          aria-hidden="true"
-        />
-        <span
-          className="absolute right-0 bottom-0 h-12 w-12 rounded-br-2xl border-r-4 border-b-4 border-brand-neon shadow-[0_0_12px_rgba(16,185,129,0.6)]"
-          aria-hidden="true"
-        />
-      </div>
+    <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center px-6">
+      <div
+        aria-hidden="true"
+        className={`rounded-3xl border border-white/40 shadow-[0_0_0_100vmax_rgba(15,23,42,0.45)] ${
+          variant === 'card'
+            ? 'aspect-[1.586] w-full max-w-[340px]'
+            : 'aspect-[1/1.414] w-[min(100%,42vh)] max-w-[300px]'
+        }`}
+      />
     </div>
   );
 }
@@ -99,7 +89,7 @@ export default function CameraView({
   const [status, setStatus] = useState<CameraStatus>('loading');
   const [errorMessage, setErrorMessage] = useState('');
   const [flash, setFlash] = useState(false);
-  // El marco de encuadre solo aplica a documentos tipo carnet
+  // El tipo de documento define el aspecto del marco de encuadre
   const [documentType, setDocumentType] = useState<DocumentType>('document');
 
   /** Detiene todos los tracks para apagar el indicador de cámara del sistema. */
@@ -177,16 +167,46 @@ export default function CameraView({
     const height = video.videoHeight;
     if (width === 0 || height === 0) return;
 
-    // Pinta el frame actual en el canvas oculto, reducido a MAX_CAPTURE_SIDE
-    const scale = Math.min(1, MAX_CAPTURE_SIDE / Math.max(width, height));
-    canvas.width = Math.max(1, Math.round(width * scale));
-    canvas.height = Math.max(1, Math.round(height * scale));
+    // El <video> usa object-cover: se captura exactamente el recorte visible,
+    // no el frame completo, para que la guía de encuadre no mienta.
+    const boxWidth = video.clientWidth;
+    const boxHeight = video.clientHeight;
+    let sourceX = 0;
+    let sourceY = 0;
+    let sourceWidth = width;
+    let sourceHeight = height;
+
+    if (boxWidth > 0 && boxHeight > 0) {
+      const coverScale = Math.max(boxWidth / width, boxHeight / height);
+      sourceWidth = Math.min(width, boxWidth / coverScale);
+      sourceHeight = Math.min(height, boxHeight / coverScale);
+      sourceX = (width - sourceWidth) / 2;
+      sourceY = (height - sourceHeight) / 2;
+    }
+
+    // Pinta el recorte visible en el canvas oculto, acotado a MAX_CAPTURE_SIDE
+    const scale = Math.min(
+      1,
+      MAX_CAPTURE_SIDE / Math.max(sourceWidth, sourceHeight),
+    );
+    canvas.width = Math.max(1, Math.round(sourceWidth * scale));
+    canvas.height = Math.max(1, Math.round(sourceHeight * scale));
     const context = canvas.getContext('2d');
     if (!context) return;
 
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = 'high';
-    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    context.drawImage(
+      video,
+      sourceX,
+      sourceY,
+      sourceWidth,
+      sourceHeight,
+      0,
+      0,
+      canvas.width,
+      canvas.height,
+    );
     const dataUrl = canvas.toDataURL('image/jpeg', CAPTURE_QUALITY);
 
     // Feedback visual de captura (flash blanco)
@@ -213,8 +233,10 @@ export default function CameraView({
       {/* Canvas oculto: se usa para extraer el frame capturado */}
       <canvas ref={canvasRef} className="hidden" />
 
-      {/* Marco estilo escáner: solo para documentos tipo carnet */}
-      {status === 'active' && documentType === 'carnet' && <ScanFrame />}
+      {/* Guía de encuadre: tarjeta o hoja completa */}
+      {status === 'active' && (
+        <ScanFrame variant={documentType === 'carnet' ? 'card' : 'sheet'} />
+      )}
 
       {/* Flash de captura */}
       <div
@@ -304,8 +326,8 @@ export default function CameraView({
 
           <p className="text-[11px] font-semibold tracking-wide text-white/70 uppercase">
             {documentType === 'carnet'
-              ? 'Coloca el carnet dentro del marco'
-              : 'Coloca el documento en el encuadre'}
+              ? 'Ubica el carnet dentro del marco'
+              : 'Ubica la hoja dentro del marco'}
           </p>
           <button
             type="button"

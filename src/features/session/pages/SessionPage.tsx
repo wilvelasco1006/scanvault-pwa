@@ -1,14 +1,20 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import {
   ArrowLeft,
   ChevronDown,
   ChevronUp,
   FileText,
+  IdCard,
   Pencil,
   Plus,
   Trash2,
 } from 'lucide-react';
 import SaveDocumentModal from '../../export/components/SaveDocumentModal';
+import {
+  composeCarnetSheets,
+  type CarnetScale,
+} from '../../export/lib/carnetSheet';
+import type { PdfPageImage } from '../../export/lib/pdfGenerator';
 import type { ScanPage } from '../../../types/scan';
 
 interface SessionPageProps {
@@ -28,6 +34,11 @@ interface SessionPageProps {
   onSaved?: () => void;
 }
 
+const CARNET_SCALES: ReadonlyArray<{ value: CarnetScale; label: string }> = [
+  { value: 1, label: '100%' },
+  { value: 1.5, label: '150%' },
+];
+
 function pageCountLabel(count: number): string {
   return count === 1 ? '1 página' : `${count} páginas`;
 }
@@ -41,7 +52,35 @@ export default function SessionPage({
   onBack,
   onSaved,
 }: SessionPageProps) {
-  const [exportOpen, setExportOpen] = useState(false);
+  const [joinCarnet, setJoinCarnet] = useState(true);
+  const [carnetScale, setCarnetScale] = useState<CarnetScale>(1);
+  const [exportImages, setExportImages] = useState<PdfPageImage[] | null>(null);
+  const [preparing, setPreparing] = useState(false);
+
+  // Juntar caras solo tiene sentido con pares completos de carnet
+  const canJoinCarnet =
+    pages.length >= 2 &&
+    pages.length % 2 === 0 &&
+    pages.every((page) => page.kind === 'carnet');
+
+  const handleExport = useCallback(async () => {
+    if (pages.length === 0 || preparing) return;
+    setPreparing(true);
+
+    try {
+      const images =
+        joinCarnet && canJoinCarnet
+          ? await composeCarnetSheets(pages, carnetScale)
+          : pages.map((page) => ({ dataUrl: page.renderedDataUrl }));
+      setExportImages(images);
+    } catch (error) {
+      console.error('No se pudo preparar el PDF:', error);
+      // Ante un fallo de composición, se exportan las páginas sueltas
+      setExportImages(pages.map((page) => ({ dataUrl: page.renderedDataUrl })));
+    } finally {
+      setPreparing(false);
+    }
+  }, [canJoinCarnet, carnetScale, joinCarnet, pages, preparing]);
 
   return (
     <div className="flex min-h-dvh flex-col bg-slate-50 text-slate-800">
@@ -125,7 +164,13 @@ export default function SessionPage({
 
                   <div className="flex min-w-0 flex-1 flex-col gap-2">
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-slate-800">
+                      <p className="flex items-center gap-1.5 truncate text-sm font-semibold text-slate-800">
+                        {page.kind === 'carnet' && (
+                          <IdCard
+                            className="h-3.5 w-3.5 shrink-0 text-slate-400"
+                            aria-hidden="true"
+                          />
+                        )}
                         {page.kind === 'carnet' ? 'Carnet' : 'Documento'}
                       </p>
                       <p className="text-xs text-slate-500">
@@ -181,24 +226,79 @@ export default function SessionPage({
 
       <footer className="sticky bottom-0 border-t border-slate-200 bg-slate-50/95 px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] backdrop-blur">
         <div className="mx-auto w-full max-w-md">
+          {/* Carnet: frente y dorso en la misma hoja */}
+          {canJoinCarnet && (
+            <div className="mb-3 rounded-2xl border border-slate-200 bg-white p-3">
+              <label className="flex items-center justify-between gap-3">
+                <span className="inline-flex items-center gap-2 text-xs font-semibold text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={joinCarnet}
+                    onChange={(event) => setJoinCarnet(event.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300 accent-brand-teal"
+                  />
+                  Ambas caras en una hoja
+                </span>
+                {joinCarnet && (
+                  <span className="text-[11px] font-medium text-slate-500">
+                    {pages.length / 2}{' '}
+                    {pages.length / 2 === 1 ? 'hoja' : 'hojas'}
+                  </span>
+                )}
+              </label>
+
+              {joinCarnet && (
+                <div className="mt-2.5 flex items-center gap-2">
+                  <span className="text-[11px] font-medium text-slate-500">
+                    Tamaño
+                  </span>
+                  {CARNET_SCALES.map((option) => {
+                    const active = carnetScale === option.value;
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        aria-pressed={active}
+                        onClick={() => setCarnetScale(option.value)}
+                        className={`rounded-full px-3 py-1 text-[11px] font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-brand-teal focus-visible:outline-none ${
+                          active
+                            ? 'bg-brand-teal text-white'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
           <button
             type="button"
-            onClick={() => setExportOpen(true)}
-            disabled={pages.length === 0}
+            onClick={() => void handleExport()}
+            disabled={pages.length === 0 || preparing}
             className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-brand-teal px-5 py-3.5 text-sm font-semibold text-white transition-colors hover:bg-brand-teal-dark disabled:cursor-not-allowed disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-brand-neon focus-visible:outline-none"
           >
             <FileText className="h-4 w-4" aria-hidden="true" />
-            Generar PDF · {pageCountLabel(pages.length)}
+            {preparing
+              ? 'Preparando…'
+              : `Generar PDF · ${pageCountLabel(
+                  joinCarnet && canJoinCarnet
+                    ? pages.length / 2
+                    : pages.length,
+                )}`}
           </button>
         </div>
       </footer>
 
-      {exportOpen && pages.length > 0 && (
+      {exportImages && (
         <SaveDocumentModal
-          pageImages={pages.map((page) => page.renderedDataUrl)}
-          onClose={() => setExportOpen(false)}
+          pages={exportImages}
+          onClose={() => setExportImages(null)}
           onSaved={() => {
-            setExportOpen(false);
+            setExportImages(null);
             onSaved?.();
           }}
         />
