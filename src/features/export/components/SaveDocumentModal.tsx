@@ -6,8 +6,8 @@ import { createThumbnail } from '../../../lib/image/thumbnail';
 import type { ScannedDocument } from '../../../types/document';
 
 interface SaveDocumentModalProps {
-  /** Imagen final procesada por el editor (data URL PNG). */
-  imageDataUrl: string;
+  /** Imágenes finales de cada página, en el orden del PDF (data URL). */
+  pageImages: string[];
   onClose?: () => void;
   /** Se invoca al guardar con éxito el documento en IndexedDB. */
   onSaved?: (document: ScannedDocument) => void;
@@ -37,7 +37,7 @@ function slugify(value: string): string {
 }
 
 export default function SaveDocumentModal({
-  imageDataUrl,
+  pageImages,
   onClose,
   onSaved,
 }: SaveDocumentModalProps) {
@@ -45,6 +45,8 @@ export default function SaveDocumentModal({
   const [busy, setBusy] = useState<BusyAction>(null);
   const [error, setError] = useState<string | null>(null);
   const [downloaded, setDownloaded] = useState(false);
+
+  const pageCount = pageImages.length;
 
   // Cachea PDF + miniatura para no regenerarlos si descargas y luego guardas
   const preparedRef = useRef<{
@@ -55,13 +57,14 @@ export default function SaveDocumentModal({
   const prepare = useCallback(async () => {
     if (!preparedRef.current) {
       const [pdf, thumbnailUrl] = await Promise.all([
-        generatePdf(imageDataUrl, 'a4'),
-        createThumbnail(imageDataUrl),
+        generatePdf(pageImages, 'a4'),
+        // La miniatura del dashboard se toma de la primera página
+        createThumbnail(pageImages[0]),
       ]);
       preparedRef.current = { pdf, thumbnailUrl };
     }
     return preparedRef.current;
-  }, [imageDataUrl]);
+  }, [pageImages]);
 
   // Cerrar con Escape (salvo durante una operación en curso)
   useEffect(() => {
@@ -85,6 +88,7 @@ export default function SaveDocumentModal({
         title: title.trim() || defaultTitle(),
         createdAt: new Date().toISOString(),
         fileSize: pdf.size,
+        pageCount: pdf.pageCount,
         thumbnailUrl,
         pdfBlob: pdf.blob,
       };
@@ -148,6 +152,12 @@ export default function SaveDocumentModal({
             <X className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>
+
+        <p className="mb-4 text-xs text-slate-400">
+          {pageCount === 1
+            ? '1 página en el PDF'
+            : `${pageCount} páginas en el PDF`}
+        </p>
 
         {/* Título */}
         <form

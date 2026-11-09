@@ -6,6 +6,8 @@ export interface GeneratedPdf {
   blob: Blob;
   /** Tamaño del PDF en bytes. */
   size: number;
+  /** Cantidad de páginas incluidas. */
+  pageCount: number;
 }
 
 const PAGE_ORIENTATION = 'portrait' as const;
@@ -15,56 +17,80 @@ const MARGIN_MM = 8;
 const SCAN_DPI = 300;
 const MM_PER_INCH = 25.4;
 
+/** jsPDF necesita saber el formato real del data URL que recibe. */
+function detectImageFormat(dataUrl: string): 'PNG' | 'JPEG' {
+  return dataUrl.startsWith('data:image/png') ? 'PNG' : 'JPEG';
+}
+
+/** Tamaño físico de página: A4 fijo o el tamaño de la imagen a 300 DPI. */
+function pageFormatFor(
+  image: HTMLImageElement,
+  pageSize: PdfPageSize,
+): string | number[] {
+  if (pageSize === 'a4') return 'a4';
+  return [
+    image.naturalWidth * (MM_PER_INCH / SCAN_DPI),
+    image.naturalHeight * (MM_PER_INCH / SCAN_DPI),
+  ];
+}
+
 /**
- * Convierte la imagen procesada (data URL) en un PDF de una sola página
- * usando jsPDF. Generación 100% local, sin subir nada a la red.
+ * Convierte una o más imágenes procesadas (data URLs) en un PDF de varias
+ * páginas usando jsPDF. Generación 100% local, sin subir nada a la red.
  *
- * - `pageSize: 'a4'`  → página A4, imagen escalada y centrada con margen.
- * - `pageSize: 'fit'` → página con el tamaño físico de la imagen (300 DPI).
+ * - `pageSize: 'a4'`  → cada página A4, imagen escalada y centrada con margen.
+ * - `pageSize: 'fit'` → cada página con el tamaño físico de su imagen (300 DPI).
  *
  * jsPDF se importa dinámicamente para que no pese en el bundle inicial.
  */
 export async function generatePdf(
-  imageDataUrl: string,
+  imageDataUrls: string[],
   pageSize: PdfPageSize = 'a4',
 ): Promise<GeneratedPdf> {
-  const [{ jsPDF }, image] = await Promise.all([
-    import('jspdf'),
-    loadImage(imageDataUrl),
-  ]);
+  if (imageDataUrls.length === 0) {
+    throw new Error('Se necesita al menos una página para generar el PDF.');
+  }
 
-  const format: string | number[] =
-    pageSize === 'fit'
-      ? [
-          image.naturalWidth * (MM_PER_INCH / SCAN_DPI),
-          image.naturalHeight * (MM_PER_INCH / SCAN_DPI),
-        ]
-      : 'a4';
+  const [{ jsPDF }, images] = await Promise.all([
+    import('jspdf'),
+    Promise.all(imageDataUrls.map((dataUrl) => loadImage(dataUrl))),
+  ]);
 
   const doc = new jsPDF({
     orientation: PAGE_ORIENTATION,
     unit: PAGE_UNIT,
-    format,
+    format: pageFormatFor(images[0], pageSize),
   });
 
-  const pageWidth = doc.internal.pageSize.getWidth();
-  const pageHeight = doc.internal.pageSize.getHeight();
-  const usableWidth = pageWidth - MARGIN_MM * 2;
-  const usableHeight = pageHeight - MARGIN_MM * 2;
+  images.forEach((image, index) => {
+    if (index > 0) doc.addPage(pageFormatFor(image, pageSize));
 
-  // Encajar dentro de la página sin distorsionar la proporción
-  const ratio = Math.min(
-    usableWidth / image.naturalWidth,
-    usableHeight / image.naturalHeight,
-  );
-  const imageWidthMm = image.naturalWidth * ratio;
-  const imageHeightMm = image.naturalHeight * ratio;
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const usableWidth = pageWidth - MARGIN_MM * 2;
+    const usableHeight = pageHeight - MARGIN_MM * 2;
 
-  const x = (pageWidth - imageWidthMm) / 2;
-  const y = (pageHeight - imageHeightMm) / 2;
+    // Encajar dentro de la página sin distorsionar la proporción
+    const ratio = Math.min(
+      usableWidth / image.naturalWidth,
+      usableHeight / image.naturalHeight,
+    );
+    const imageWidthMm = image.naturalWidth * ratio;
+    const imageHeightMm = image.naturalHeight * ratio;
 
-  doc.addImage(imageDataUrl, 'PNG', x, y, imageWidthMm, imageHeightMm);
+    const x = (pageWidth - imageWidthMm) / 2;
+    const y = (pageHeight - imageHeightMm) / 2;
+
+    doc.addImage(
+      imageDataUrls[index],
+      detectImageFormat(imageDataUrls[index]),
+      x,
+      y,
+      imageWidthMm,
+      imageHeightMm,
+    );
+  });
 
   const blob = doc.output('blob') as Blob;
-  return { blob, size: blob.size };
+  return { blob, size: blob.size, pageCount: images.length };
 }

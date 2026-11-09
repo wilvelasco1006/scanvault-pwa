@@ -1,13 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Camera, CameraOff, Loader2, RotateCcw } from 'lucide-react';
+import { Camera, CameraOff, Check, Loader2, RotateCcw } from 'lucide-react';
 import type { DocumentType } from '../../../types/scan';
 
 type CameraStatus = 'loading' | 'active' | 'error';
 
 interface CameraViewProps {
-  /** Receives the captured frame as a PNG data URL + the selected document type. */
+  /** Receives the captured frame as a JPEG data URL + the selected document type. */
   onCapture?: (dataUrl: string, documentType: DocumentType) => void;
+  /** Páginas ya capturadas en la sesión actual. */
+  pageCount?: number;
+  /** Cierra la cámara y pasa a revisar las páginas escaneadas. */
+  onDone?: () => void;
 }
+
+/**
+ * Lado máximo (px) de la captura. Una hoja A4 a 2600 px son ~314 DPI, más que
+ * suficiente para el PDF; capturar el frame completo del sensor multiplicaría
+ * el peso en memoria de cada página sin ganar calidad útil.
+ */
+const MAX_CAPTURE_SIDE = 2600;
+const CAPTURE_QUALITY = 0.92;
 
 function describeCameraError(error: unknown): string {
   if (error instanceof DOMException) {
@@ -74,7 +86,11 @@ function ScanFrame() {
   );
 }
 
-export default function CameraView({ onCapture }: CameraViewProps) {
+export default function CameraView({
+  onCapture,
+  pageCount = 0,
+  onDone,
+}: CameraViewProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -161,14 +177,17 @@ export default function CameraView({ onCapture }: CameraViewProps) {
     const height = video.videoHeight;
     if (width === 0 || height === 0) return;
 
-    // Pinta el frame actual en el canvas oculto y extrae la imagen PNG
-    canvas.width = width;
-    canvas.height = height;
+    // Pinta el frame actual en el canvas oculto, reducido a MAX_CAPTURE_SIDE
+    const scale = Math.min(1, MAX_CAPTURE_SIDE / Math.max(width, height));
+    canvas.width = Math.max(1, Math.round(width * scale));
+    canvas.height = Math.max(1, Math.round(height * scale));
     const context = canvas.getContext('2d');
     if (!context) return;
 
-    context.drawImage(video, 0, 0, width, height);
-    const dataUrl = canvas.toDataURL('image/png');
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = 'high';
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL('image/jpeg', CAPTURE_QUALITY);
 
     // Feedback visual de captura (flash blanco)
     setFlash(true);
@@ -233,6 +252,21 @@ export default function CameraView({ onCapture }: CameraViewProps) {
           >
             <RotateCcw className="h-4 w-4" aria-hidden="true" />
             Reintentar
+          </button>
+        </div>
+      )}
+
+      {/* Sesión en curso: páginas capturadas + pasar a revisión */}
+      {status === 'active' && pageCount > 0 && (
+        <div className="absolute top-[max(1rem,env(safe-area-inset-top))] right-4 z-30">
+          <button
+            type="button"
+            onClick={onDone}
+            aria-label={`Terminar captura y revisar ${pageCount} páginas`}
+            className="inline-flex items-center gap-2 rounded-full bg-brand-teal px-4 py-2 text-sm font-semibold text-white shadow-lg transition-colors hover:bg-brand-teal-dark focus-visible:ring-2 focus-visible:ring-brand-neon focus-visible:outline-none"
+          >
+            <Check className="h-4 w-4" aria-hidden="true" />
+            Listo ({pageCount})
           </button>
         </div>
       )}

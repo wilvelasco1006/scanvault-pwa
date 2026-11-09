@@ -20,6 +20,10 @@ function formatFileSize(bytes: number): string {
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString('es-ES', DATE_OPTIONS);
 }
+function formatPageCount(count?: number): string {
+  if (!count || count < 1) return '';
+  return count === 1 ? '1 página' : `${count} páginas`;
+}
 // Esta interfaz define las propiedades que el componente DocumentCard espera recibir. Incluye un objeto `document` de tipo `ScannedDocument`, que contiene información sobre el documento escaneado, y una función opcional `onClick`, que se invoca cuando el usuario hace clic en la tarjeta del documento.
 interface DocumentCardProps {
   document: ScannedDocument;
@@ -53,7 +57,9 @@ export default function DocumentCard({ document, onClick }: DocumentCardProps) {
           {formatDate(document.createdAt)}
         </span>
         <span className="text-xs text-slate-400">
-          {formatFileSize(document.fileSize)}
+          {[formatFileSize(document.fileSize), formatPageCount(document.pageCount)]
+            .filter(Boolean)
+            .join(' · ')}
         </span>
       </span>
     </button>

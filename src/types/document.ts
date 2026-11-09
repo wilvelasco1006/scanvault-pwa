@@ -12,6 +12,8 @@ export interface ScannedDocument {
   createdAt: string;
   /** Size of the stored file in bytes. */
   fileSize: number;
+  /** Cantidad de páginas que componen el PDF guardado. */
+  pageCount?: number;
   /** Data URL de la miniatura que se muestra en la lista del Dashboard. */
   thumbnailUrl: string;
   /** Blob del PDF generado (application/pdf), persistido en IndexedDB. */

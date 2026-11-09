@@ -2,8 +2,9 @@
  * Operaciones de procesamiento de imagen (Canvas) desacopladas de la UI.
  * Se aplican directamente sobre el contexto 2D del lienzo del editor.
  */
+import type { FilterId } from '../../../types/scan';
 
-export type FilterId = 'original' | 'grayscale' | 'bw' | 'scannerPro';
+export type { FilterId } from '../../../types/scan';
 
 export const FILTER_OPTIONS: ReadonlyArray<{ id: FilterId; label: string }> = [
   { id: 'original', label: 'Original' },

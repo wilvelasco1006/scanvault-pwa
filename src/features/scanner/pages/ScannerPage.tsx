@@ -3,16 +3,29 @@ import CameraView from '../components/CameraView';
 import type { DocumentType } from '../../../types/scan';
 
 interface ScannerPageProps {
-  /** Returns to the dashboard. */
+  /** Páginas ya capturadas en la sesión actual. */
+  pageCount?: number;
+  /** Returns to the dashboard (discards the session). */
   onBack?: () => void;
-  /** Receives the captured PNG data URL + selected document type from CameraView. */
+  /** Receives the captured data URL + selected document type from CameraView. */
   onCapture?: (dataUrl: string, documentType: DocumentType) => void;
+  /** Cierra la cámara y pasa a revisar las páginas. */
+  onDone?: () => void;
 }
 
-export default function ScannerPage({ onBack, onCapture }: ScannerPageProps) {
+export default function ScannerPage({
+  pageCount = 0,
+  onBack,
+  onCapture,
+  onDone,
+}: ScannerPageProps) {
   return (
     <div className="relative min-h-dvh bg-slate-900">
-      <CameraView onCapture={onCapture} />
+      <CameraView
+        onCapture={onCapture}
+        pageCount={pageCount}
+        onDone={onDone}
+      />
 
       {/* Volver al Dashboard (siempre accesible, incluso en error) */}
       <button

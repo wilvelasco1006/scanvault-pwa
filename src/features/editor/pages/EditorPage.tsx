@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
+  Check,
   Crop,
   Loader2,
   RotateCcw,
   RotateCw,
-  Save,
   ScanLine,
   Undo2,
 } from 'lucide-react';
 import { applyFilter, FILTER_OPTIONS, type FilterId } from '../lib/imageEffects';
+import { canvasToPageImage } from '../lib/pageImage';
 import {
   applyAdaptiveThreshold,
   detectDocumentContour,
@@ -19,18 +20,17 @@ import {
 } from '../lib/documentProcessing';
 import { initOpenCV } from '../../scanner/lib/opencv';
 import type { Corners, Point } from '../../../types/geometry';
-import type { DocumentType } from '../../../types/scan';
-import SaveDocumentModal from '../../export/components/SaveDocumentModal';
+import type { PageEditState } from '../../../types/scan';
 
 interface EditorPageProps {
-  /** Imagen capturada por la cámara (data URL PNG). */
-  capturedImage: string;
-  /** Tipo de documento escaneado: el encuadre/recorte automático es solo para carnet. */
-  documentType?: DocumentType;
-  /** Vuelve a la pantalla de cámara. */
+  /** Imagen original de la página (data URL). */
+  sourceDataUrl: string;
+  /** Estado de edición previo, si la página se está reeditando. */
+  initial?: PageEditState;
+  /** Vuelve a la lista de páginas del escaneo. */
   onBack?: () => void;
-  /** Se invoca al guardar con éxito el documento (después del modal). */
-  onSaved?: () => void;
+  /** Entrega la imagen procesada y el estado de edición de la página. */
+  onCommit?: (renderedDataUrl: string, state: PageEditState) => void;
 }
 
 /** Radio (px, en el espacio del lienzo) para detectar el "agarre" de una esquina. */
@@ -107,10 +107,10 @@ function paintCornerOverlay({
 }
 
 export default function EditorPage({
-  capturedImage,
-  documentType = 'document',
+  sourceDataUrl,
+  initial,
   onBack,
-  onSaved,
+  onCommit,
 }: EditorPageProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
@@ -119,36 +119,36 @@ export default function EditorPage({
   const cornersRef = useRef<Corners | null>(null);
   const renderTokenRef = useRef(0);
 
-  // El encuadre/recorte automático por esquinas es exclusivo de documentos tipo carnet
-  const isCarnet = documentType === 'carnet';
+  // Si la página ya trae esquinas (editada antes), no se vuelve a autodetectar:
+  // se respeta el marco que el usuario ajustó.
+  const initialCornersRef = useRef<Corners | null>(initial?.corners ?? null);
 
   // Contador que incrementa cuando se carga la imagen → dispara el redibujado
   const [loaded, setLoaded] = useState(0);
-  const [rotation, setRotation] = useState(0); // grados: 0 | 90 | 180 | 270
-  const [filter, setFilter] = useState<FilterId>('original');
+  // grados: 0 | 90 | 180 | 270
+  const [rotation, setRotation] = useState(initial?.rotation ?? 0);
+  const [filter, setFilter] = useState<FilterId>(initial?.filter ?? 'original');
 
   // Encuadre: esquinas (en el espacio de la imagen base) + si el recorte ya se aplicó
-  const [corners, setCorners] = useState<Corners | null>(null);
-  const [perspectiveApplied, setPerspectiveApplied] = useState(false);
+  const [corners, setCorners] = useState<Corners | null>(
+    initial?.corners ?? null,
+  );
+  const [perspectiveApplied, setPerspectiveApplied] = useState(
+    initial?.perspectiveApplied ?? false,
+  );
 
   // Flags de UI (proceso OpenCV en curso / errores)
   const [busy, setBusy] = useState(false);
   const [detecting, setDetecting] = useState(false);
   const [opencvError, setOpencvError] = useState<string | null>(null);
 
-  // Modal de guardado/exportación
-  const [modalOpen, setModalOpen] = useState(false);
-  const [modalImageDataUrl, setModalImageDataUrl] = useState<string | null>(null);
-
   // Espejo de `corners` accesible desde el pipeline de render (evita re-render por arrastre)
   useEffect(() => {
     cornersRef.current = corners;
   }, [corners]);
 
-  // Auto-detección del contorno (se dispara al cargar la imagen y desde el botón)
-  // Solo aplica a carnets: para documentos normales no se recorta el encuadre.
+  // Auto-detección del contorno del documento (hoja o carnet) al cargar la imagen
   const runDetection = useCallback(async (interactive: boolean) => {
-    if (!isCarnet) return;
     const image = imageRef.current;
     if (!image) return;
     if (interactive) setDetecting(true);
@@ -162,26 +162,28 @@ export default function EditorPage({
       }
     } catch (error) {
       console.error('Detección de contorno fallida', error);
-      setOpencvError('El auto-encuadre no está disponible: no se pudo cargar OpenCV.');
+      setOpencvError(
+        'El auto-encuadre no está disponible: no se pudo cargar OpenCV.',
+      );
     } finally {
       if (interactive) setDetecting(false);
     }
-  }, [isCarnet]);
+  }, []);
 
-  // Carga la imagen capturada (data URL) en un HTMLImageElement
+  // Carga la imagen original de la página (data URL) en un HTMLImageElement
   useEffect(() => {
     imageRef.current = null;
     const image = new Image();
     image.onload = () => {
       imageRef.current = image;
       setLoaded((n) => n + 1);
-      void runDetection(false); // auto-encuadre en cuanto entra la imagen base
+      if (!initialCornersRef.current) void runDetection(false);
     };
-    image.src = capturedImage;
+    image.src = sourceDataUrl;
     return () => {
       if (imageRef.current === image) imageRef.current = null;
     };
-  }, [capturedImage, runDetection]);
+  }, [sourceDataUrl, runDetection]);
 
   // Pipeline de render: rotación → (recorte por perspectiva) → (filtro)
   // El contenido vive en canvasRef; las esquinas se dibujan en overlayRef.
@@ -211,10 +213,8 @@ export default function EditorPage({
     baseCtx.drawImage(image, -baseW / 2, -baseH / 2);
 
     // 2) Recorte por perspectiva + filtro 'Escáner Pro' (OpenCV)
-    //    El recorte automático es exclusivo de carnets; para documentos solo
-    //    se aplican rotación y filtros convencionales.
     const { current: currentCorners } = cornersRef;
-    let doWarp = isCarnet && perspectiveApplied && currentCorners !== null;
+    let doWarp = perspectiveApplied && currentCorners !== null;
     let doScan = filter === 'scannerPro';
 
     if (doWarp || doScan) {
@@ -277,12 +277,14 @@ export default function EditorPage({
     } catch (error) {
       console.error('Error en el pipeline de procesamiento', error);
       if (token === renderTokenRef.current) {
-        setOpencvError('No se pudo procesar la imagen con OpenCV en este dispositivo.');
+        setOpencvError(
+          'No se pudo procesar la imagen con OpenCV en este dispositivo.',
+        );
       }
     } finally {
       if (token === renderTokenRef.current) setBusy(false);
     }
-  }, [loaded, rotation, filter, perspectiveApplied, isCarnet]);
+  }, [loaded, rotation, filter, perspectiveApplied]);
 
   useEffect(() => {
     if (loaded === 0) return;
@@ -295,7 +297,14 @@ export default function EditorPage({
     const canvas = canvasRef.current;
     const image = imageRef.current;
     if (!overlay || !canvas || !image) return;
-    paintCornerOverlay({ canvas, overlay, corners, rotation, perspectiveApplied, image });
+    paintCornerOverlay({
+      canvas,
+      overlay,
+      corners,
+      rotation,
+      perspectiveApplied,
+      image,
+    });
   }, [corners, perspectiveApplied, rotation]);
 
   useEffect(() => {
@@ -312,9 +321,9 @@ export default function EditorPage({
   }, []);
 
   const handleApplyCrop = useCallback(() => {
-    if (!isCarnet || !cornersRef.current) return;
+    if (!cornersRef.current) return;
     setPerspectiveApplied(true);
-  }, [isCarnet]);
+  }, []);
 
   const handleResetCrop = useCallback(() => {
     setPerspectiveApplied(false);
@@ -378,7 +387,9 @@ export default function EditorPage({
         y: Math.min(Math.max(base.y, 2), image.naturalHeight - 2),
       };
       setCorners((prev) =>
-        prev ? (prev.map((c, i) => (i === index ? clamped : c)) as Corners) : prev,
+        prev
+          ? (prev.map((c, i) => (i === index ? clamped : c)) as Corners)
+          : prev,
       );
     },
     [clientToCanvasPoint, corners, perspectiveApplied, rotation],
@@ -388,34 +399,32 @@ export default function EditorPage({
     dragIndexRef.current = null;
   }, []);
 
-  const handleOpenSaveModal = useCallback(() => {
+  const handleCommit = useCallback(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
-    // Consolida rotación + recorte + filtro en una imagen PNG para exportar
-    setModalImageDataUrl(canvas.toDataURL('image/png'));
-    setModalOpen(true);
-  }, []);
-
-  const handleCloseSaveModal = useCallback(() => {
-    setModalOpen(false);
-    setModalImageDataUrl(null);
-  }, []);
+    if (!canvas || busy) return;
+    onCommit?.(canvasToPageImage(canvas, filter), {
+      rotation,
+      filter,
+      corners: cornersRef.current,
+      perspectiveApplied,
+    });
+  }, [busy, filter, onCommit, perspectiveApplied, rotation]);
 
   const handleFilterChange = useCallback((nextFilter: FilterId) => {
     setFilter(nextFilter);
     setOpencvError(null);
   }, []);
 
-  const draggable = isCarnet && corners !== null && !perspectiveApplied;
+  const draggable = corners !== null && !perspectiveApplied;
 
   return (
     <div className="flex min-h-dvh flex-col bg-slate-900 text-white">
-      {/* Barra superior: navegación + guardar */}
+      {/* Barra superior: navegación + aplicar */}
       <header className="flex items-center gap-2 border-b border-white/10 px-4 py-3">
         <button
           type="button"
           onClick={onBack}
-          aria-label="Volver a la cámara"
+          aria-label="Volver a las páginas"
           className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-white/10 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-white/20 focus-visible:ring-2 focus-visible:ring-brand-neon focus-visible:outline-none"
         >
           <ArrowLeft className="h-4 w-4" aria-hidden="true" />
@@ -423,18 +432,18 @@ export default function EditorPage({
         </button>
 
         <h1 className="min-w-0 flex-1 truncate text-center text-sm font-semibold tracking-wide text-white">
-          Editar escaneo
+          Editar página
         </h1>
 
         <button
           type="button"
-          onClick={handleOpenSaveModal}
-          aria-label="Guardar documento"
-          disabled={busy}
+          onClick={handleCommit}
+          disabled={busy || loaded === 0}
+          aria-label="Aplicar cambios de la página"
           className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-brand-teal px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-brand-teal-dark focus-visible:ring-2 focus-visible:ring-brand-neon focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
         >
-          <Save className="h-4 w-4" aria-hidden="true" />
-          Guardar
+          <Check className="h-4 w-4" aria-hidden="true" />
+          Aplicar
         </button>
       </header>
 
@@ -500,52 +509,50 @@ export default function EditorPage({
           </button>
         </div>
 
-        {/* Encuadre / recorte por perspectiva (solo para carnet) */}
-        {isCarnet && (
-          <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
-            {!perspectiveApplied ? (
-              <>
-                <button
-                  type="button"
-                  onClick={() => void runDetection(true)}
-                  disabled={detecting || busy}
-                  className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3.5 py-1.5 text-xs font-semibold text-white/80 transition-colors hover:bg-white/20 focus-visible:ring-2 focus-visible:ring-brand-neon focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {detecting ? (
-                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                  ) : (
-                    <ScanLine className="h-4 w-4" aria-hidden="true" />
-                  )}
-                  Auto encuadre
-                </button>
-                <button
-                  type="button"
-                  onClick={handleApplyCrop}
-                  disabled={!corners || busy}
-                  className="inline-flex items-center gap-1.5 rounded-full bg-brand-teal px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-brand-teal-dark focus-visible:ring-2 focus-visible:ring-brand-neon focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <Crop className="h-4 w-4" aria-hidden="true" />
-                  Aplicar recorte
-                </button>
-                {corners && (
-                  <p className="w-full text-center text-[11px] text-white/50">
-                    Arrastra las esquinas para ajustar el marco del documento
-                  </p>
-                )}
-              </>
-            ) : (
+        {/* Encuadre / recorte por perspectiva */}
+        <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+          {!perspectiveApplied ? (
+            <>
               <button
                 type="button"
-                onClick={handleResetCrop}
-                disabled={busy}
+                onClick={() => void runDetection(true)}
+                disabled={detecting || busy}
                 className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3.5 py-1.5 text-xs font-semibold text-white/80 transition-colors hover:bg-white/20 focus-visible:ring-2 focus-visible:ring-brand-neon focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <Undo2 className="h-4 w-4" aria-hidden="true" />
-                Restablecer recorte
+                {detecting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <ScanLine className="h-4 w-4" aria-hidden="true" />
+                )}
+                Auto encuadre
               </button>
-            )}
-          </div>
-        )}
+              <button
+                type="button"
+                onClick={handleApplyCrop}
+                disabled={!corners || busy}
+                className="inline-flex items-center gap-1.5 rounded-full bg-brand-teal px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-brand-teal-dark focus-visible:ring-2 focus-visible:ring-brand-neon focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Crop className="h-4 w-4" aria-hidden="true" />
+                Aplicar recorte
+              </button>
+              {corners && (
+                <p className="w-full text-center text-[11px] text-white/50">
+                  Arrastra las esquinas para ajustar el marco del documento
+                </p>
+              )}
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={handleResetCrop}
+              disabled={busy}
+              className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3.5 py-1.5 text-xs font-semibold text-white/80 transition-colors hover:bg-white/20 focus-visible:ring-2 focus-visible:ring-brand-neon focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Undo2 className="h-4 w-4" aria-hidden="true" />
+              Restablecer recorte
+            </button>
+          )}
+        </div>
 
         {opencvError && (
           <p className="mt-2 text-center text-xs text-red-400">{opencvError}</p>
@@ -572,15 +579,6 @@ export default function EditorPage({
           })}
         </div>
       </footer>
-
-      {/* Modal Guardar/Exportar */}
-      {modalOpen && modalImageDataUrl && (
-        <SaveDocumentModal
-          imageDataUrl={modalImageDataUrl}
-          onClose={handleCloseSaveModal}
-          onSaved={onSaved}
-        />
-      )}
     </div>
   );
 }
