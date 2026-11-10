@@ -1,75 +1,78 @@
-# React + TypeScript + Vite
+# ScanVault
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Offline-first document scanner for the browser. Capture sheets or ID cards with the phone camera, correct the perspective, apply scan filters, and export a PDF — all on the device, with no backend, no account, and no uploads.
 
-Currently, two official plugins are available:
+## Quick path
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+1. `npm install`
+2. `npm run dev -- --host` and open `https://localhost:5173` (the dev server uses a self-signed certificate because `getUserMedia` requires HTTPS).
+3. `npm run build` to produce the static bundle in `dist/`.
 
-## React Compiler
+To test from a phone on the same network, open the `Network` URL printed by Vite and accept the self-signed certificate once.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Features
 
-## Expanding the ESLint configuration
+- **Camera capture** with a framing guide that matches the selected type: sheet (A4) or ID card (1.586). The captured frame matches the visible preview, not the full sensor.
+- **Multi-page sessions**: capture several pages, reorder or remove them before exporting.
+- **Editor**: 90° rotation, filters (original, grayscale, high-contrast B&W, Scanner Pro), OpenCV contour detection with draggable corners, and perspective correction.
+- **ID card sheets**: compose front and back on a single A4 sheet at 100% (real ID-1 size) or 150%.
+- **PDF export** with jsPDF: A4 pages, lazy-loaded, plus save to IndexedDB or direct download.
+- **Local-only storage**: documents live in IndexedDB; nothing leaves the device.
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## Stack
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+| Area | Choice |
+|------|--------|
+| UI | React 19 + TypeScript, Tailwind CSS v4 |
+| Build | Vite 8 |
+| Image processing | Canvas API + OpenCV.js (`@techstark/opencv-js`, lazy chunk) |
+| PDF | jsPDF (lazy chunk) |
+| Persistence | IndexedDB via `idb` |
+| Icons | lucide-react |
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Project structure
 
 ```
-
-You can also install [eslint-plugin-react-x](https://npmx.dev/package/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://npmx.dev/package/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
+src/
+  components/          shared UI (ErrorBoundary, GlobalErrorBanner)
+  features/
+    dashboard/         document list and entry point
+    scanner/           camera capture and framing guide
+    editor/            rotation, filters, OpenCV correction
+    session/           page list, ordering, export trigger
+    export/            PDF generation, carnet sheet, save modal
+  lib/image/           image loading and thumbnails
+  services/db.ts       IndexedDB access
+  types/               shared document, scan and geometry types
 ```
+
+Feature code is split into `components/`, `pages/` and `lib/`; canvas and PDF processing stay out of the UI components.
+
+## Scripts
+
+| Command | Purpose |
+|---------|---------|
+| `npm run dev` | Vite dev server with HTTPS |
+| `npm run build` | Type-check (`tsc -b`) and build to `dist/` |
+| `npm run preview` | Serve the production build locally |
+| `npm run lint` | ESLint over the repository |
+
+## Deployment
+
+Deploy the Vite app to Vercel with the default settings:
+
+- Build command: `npm run build`
+- Output directory: `dist`
+- Production branch: `develop` while the app is in active development; merge to `main` for releases.
+
+The type-check runs as part of the build, so a type error fails the deployment.
+
+## Status
+
+- Not installable yet: no web manifest or service worker, so there is no offline app shell or install prompt.
+- No automated tests yet; the pure helpers under `features/*/lib` are side-effect free and ready for Vitest coverage.
+- Planned: per-filter intensity controls (brightness, contrast, B&W threshold, Scanner Pro saturation).
+
+## Privacy
+
+All capture, processing and export happen in the browser. The app has no server component and never transmits document images or metadata.
