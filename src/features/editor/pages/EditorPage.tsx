@@ -447,15 +447,30 @@ export default function EditorPage({
         </button>
       </header>
 
-      {/* Lienzo interactivo: contenido + overlay de esquinas */}
-      <main className="flex min-h-0 flex-1 items-center justify-center px-4 py-4">
+      {/* Lienzo interactivo: contenido + overlay de esquinas.
+          Usa posicionamiento absoluto para tener tamaño definido: un `h-full`
+          porcentual dentro de un flex item colapsaba a 0 y la imagen no se
+          veía, aunque el canvas sí se procesaba y exportaba. */}
+      <main className="relative min-h-0 flex-1">
         {loaded === 0 ? (
-          <Loader2
-            className="h-8 w-8 animate-spin text-brand-neon"
-            aria-hidden="true"
-          />
+          <div className="absolute inset-0 flex items-center justify-center">
+            <Loader2
+              className="h-8 w-8 animate-spin text-brand-neon"
+              aria-hidden="true"
+            />
+          </div>
         ) : (
-          <div className="relative h-full w-full overflow-hidden rounded-lg">
+          <div className="absolute inset-4 overflow-hidden rounded-lg">
+            {/* Respaldo visible: si el canvas no llega a pintarse (fallo de
+                render o de tamaño en el navegador), la foto original sigue
+                visible y se pueden probar los filtros. El canvas opaco la
+                cubre en cuanto dibuja. */}
+            <img
+              src={sourceDataUrl}
+              alt=""
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 h-full w-full object-contain"
+            />
             <canvas
               ref={canvasRef}
               className="absolute inset-0 h-full w-full object-contain shadow-2xl"
